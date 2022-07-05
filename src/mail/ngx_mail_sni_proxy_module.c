@@ -14,7 +14,7 @@ static char *ngx_mail_sni_proxy_merge_conf(ngx_conf_t *cf, void *parent, void *c
 static char *ngx_mail_sni_proxy_enable(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 
-static ngx_command_t  ngx_mail_ssl_commands[] = {
+static ngx_command_t  ngx_mail_sni_proxy_commands[] = {
 
     { ngx_string("sni_proxy"),
       NGX_MAIL_SRV_CONF|NGX_CONF_FLAG,
@@ -75,9 +75,6 @@ ngx_mail_sni_proxy_merge_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_mail_sni_proxy_conf_t *prev = parent;
     ngx_mail_sni_proxy_conf_t *conf = child;
 
-    char                *mode;
-    ngx_pool_cleanup_t  *cln;
-
     ngx_conf_merge_value(conf->enable, prev->enable, 0);
 
     return NGX_CONF_OK;
@@ -87,8 +84,6 @@ ngx_mail_sni_proxy_merge_conf(ngx_conf_t *cf, void *parent, void *child)
 static char *
 ngx_mail_sni_proxy_enable(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    ngx_mail_sni_proxy_conf_t  *spcf = conf;
-
     char  *rv;
 
     rv = ngx_conf_set_flag_slot(cf, cmd, conf);

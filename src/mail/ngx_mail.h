@@ -18,6 +18,9 @@
 #include <ngx_mail_ssl_module.h>
 #endif
 
+#if (NGX_MAIL_SNI_PROXY)
+#include <ngx_mail_sni_proxy_module.h>
+#endif
 
 
 typedef struct {
@@ -380,7 +383,6 @@ typedef struct {
 void ngx_mail_starttls_handler(ngx_event_t *rev);
 ngx_int_t ngx_mail_starttls_only(ngx_mail_session_t *s, ngx_connection_t *c);
 #endif
-
 
 void ngx_mail_init_connection(ngx_connection_t *c);
 

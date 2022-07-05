@@ -113,6 +113,7 @@ MAIL_SSL=NO
 MAIL_POP3=YES
 MAIL_IMAP=YES
 MAIL_SMTP=YES
+MAIL_SNI_PROXY=NO
 
 STREAM=NO
 STREAM_SSL=NO
@@ -295,6 +296,7 @@ $0: warning: the \"--with-ipv6\" option is deprecated"
         --with-mail=dynamic)             MAIL=DYNAMIC               ;;
         --with-mail_ssl_module)          MAIL_SSL=YES               ;;
         # STUB
+        --with-mail_sni_module)          MAIL_SNI_PROXY=YES         ;;
         --with-imap)
             MAIL=YES
             NGX_POST_CONF_MSG="$NGX_POST_CONF_MSG
