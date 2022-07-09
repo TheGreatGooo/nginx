@@ -649,7 +649,7 @@ ngx_mail_smtp_helo(ngx_mail_session_t *s, ngx_connection_t *c)
 #if (NGX_MAIL_SNI_PROXY)
         ngx_mail_sni_proxy_conf_t *snicf;
         snicf = ngx_mail_get_module_srv_conf(s, ngx_mail_sni_proxy_module);
-        if(snicf->enabled == NGX_CONF_SET) {
+        if(snicf->enable != NGX_CONF_UNSET) {
             s->out = sscf->starttls_only_capability;
             return NGX_OK;
         }
