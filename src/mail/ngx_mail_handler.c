@@ -298,6 +298,21 @@ ngx_mail_init_session_handler(ngx_event_t *rev)
     ngx_mail_init_session(c);
 }
 
+#if (NGX_MAIL_SNI_PROXY)
+void
+ngx_mail_sni_starttls_handler(ngx_event_t *rev)
+{
+    ngx_connection_t *c;
+    ngx_mail_session_t *s;
+
+    c = rev->data;
+    s = c->data;
+
+    c->log->action = "in sni starttls snoop state";
+
+    ngx_mail_init_sni_snoop(s, c);
+}
+#endif
 
 #if (NGX_MAIL_SSL)
 

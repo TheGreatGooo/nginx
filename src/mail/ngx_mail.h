@@ -418,6 +418,9 @@ void ngx_mail_auth_http_init(ngx_mail_session_t *s);
 ngx_int_t ngx_mail_realip_handler(ngx_mail_session_t *s);
 /**/
 
+#if (NGX_MAIL_SNI_PROXY)
+void ngx_mail_init_sni_snoop(ngx_mail_session_t *s, ngx_connection_t *c);
+#endif
 
 extern ngx_uint_t    ngx_mail_max_module;
 extern ngx_module_t  ngx_mail_core_module;
