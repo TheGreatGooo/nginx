@@ -305,14 +305,11 @@ ngx_mail_sni_starttls_handler(ngx_event_t *rev)
     ngx_connection_t                   *c;
     ngx_mail_session_t                 *s;
     ngx_int_t                          rc;
-    ngx_mail_sni_proxy_ctx_t           *ctx;
 
     c = rev->data;
     s = c->data;
 
     c->log->action = "in sni starttls snoop state";
-
-    rc = ngx_mail_init_sni_snoop(s, c);
    
 }
 #endif

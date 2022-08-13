@@ -132,7 +132,9 @@ ngx_mail_init_sni_snoop(ngx_mail_session_t *s, ngx_connection_t *c)
         ngx_mail_close_connection(c);
     }
 
-
+    s->host.data = ngx_pstrdup(c->pool, &ctx->host);
+    s->host.len = &ctx->host.len;
+    ngx_mail_auth_http_init(s);
 }
 
 static ngx_int_t
