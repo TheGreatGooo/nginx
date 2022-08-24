@@ -10,6 +10,8 @@
 
 static void *ngx_mail_sni_proxy_create_conf(ngx_conf_t *cf);
 static char *ngx_mail_sni_proxy_merge_conf(ngx_conf_t *cf, void *parent, void *child);
+static ngx_int_t
+ngx_mail_init_sni_preread(ngx_mail_session_t *s, ngx_connection_t *c);
 
 static char *ngx_mail_sni_proxy_enable(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
@@ -67,6 +69,10 @@ ngx_module_t  ngx_mail_sni_proxy_module = {
     NGX_MODULE_V1_PADDING
 };
 
+static ngx_int_t
+ngx_mail_sni_proxy_parse_record(ngx_mail_sni_proxy_ctx_t *ctx,
+    u_char *pos, u_char *last);
+
 static void *
 ngx_mail_sni_proxy_create_conf(ngx_conf_t *cf)
 {
@@ -109,7 +115,7 @@ ngx_mail_sni_proxy_enable(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     return NGX_CONF_OK;
 }
 
-static ngx_int_t
+ngx_int_t
 ngx_mail_init_sni_snoop(ngx_mail_session_t *s, ngx_connection_t *c)
 {
     ngx_int_t                          rc;
@@ -133,8 +139,9 @@ ngx_mail_init_sni_snoop(ngx_mail_session_t *s, ngx_connection_t *c)
     }
 
     s->host.data = ngx_pstrdup(c->pool, &ctx->host);
-    s->host.len = &ctx->host.len;
+    s->host.len = ctx->host.len;
     ngx_mail_auth_http_init(s);
+    return rc;
 }
 
 static ngx_int_t
@@ -145,6 +152,7 @@ ngx_mail_init_sni_preread(ngx_mail_session_t *s, ngx_connection_t *c)
     ngx_int_t                           rc;
     ngx_mail_sni_proxy_ctx_t           *ctx;
     ngx_mail_sni_proxy_conf_t          *conf;
+    ssize_t                             n;
 
     ngx_log_debug0(NGX_LOG_DEBUG_STREAM, c->log, 0, "tls preread handler");
 
@@ -158,8 +166,28 @@ ngx_mail_init_sni_preread(ngx_mail_session_t *s, ngx_connection_t *c)
         return NGX_DECLINED;
     }
 
-    if (c->buffer == NULL) {
+    if (s->buffer == NULL) {
         return NGX_AGAIN;
+    }
+
+    if (s->buffer->last < s->buffer->end) {
+
+        n = c->recv(c, s->buffer->last, s->buffer->end - s->buffer->last);
+
+        if (n == NGX_ERROR || n == 0) {
+            ngx_mail_close_connection(c);
+            return NGX_ERROR;
+        }
+
+        if (n > 0) {
+            s->buffer->last += n;
+        }
+
+        if (n == NGX_AGAIN) {
+            if (s->buffer->pos == s->buffer->last) {
+                return NGX_AGAIN;
+            }
+        }
     }
 
     ctx = ngx_mail_get_module_ctx(s, ngx_mail_sni_proxy_module);
@@ -173,11 +201,11 @@ ngx_mail_init_sni_preread(ngx_mail_session_t *s, ngx_connection_t *c)
 
         ctx->pool = c->pool;
         ctx->log = c->log;
-        ctx->pos = c->buffer->pos;
+        ctx->pos = s->buffer->pos;
     }
 
     p = ctx->pos;
-    last = c->buffer->last;
+    last = s->buffer->last;
 
     while (last - p >= 5) {
 
