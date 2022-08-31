@@ -421,6 +421,7 @@ ngx_int_t ngx_mail_realip_handler(ngx_mail_session_t *s);
 #if (NGX_MAIL_SNI_PROXY)
 ngx_int_t ngx_mail_init_sni_snoop(ngx_mail_session_t *s, ngx_connection_t *c);
 void ngx_mail_sni_starttls_handler(ngx_event_t *rev);
+void ngx_mail_sni_proxy_connection_init(ngx_mail_session_t *s, ngx_addr_t *peer);
 #endif
 
 extern ngx_uint_t    ngx_mail_max_module;

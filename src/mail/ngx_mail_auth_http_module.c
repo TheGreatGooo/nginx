@@ -832,6 +832,14 @@ ngx_mail_auth_http_process_headers(ngx_mail_session_t *s,
             ngx_memcpy(peer->name.data + len, ctx->port.data, ctx->port.len);
 
             ngx_destroy_pool(ctx->pool);
+            #if (NGX_MAIL_SNI_PROXY)
+                ngx_mail_sni_proxy_conf_t *snicf;
+                snicf = ngx_mail_get_module_srv_conf(s, ngx_mail_sni_proxy_module);
+                if(snicf->enable != NGX_CONF_UNSET) {
+                    ngx_mail_sni_proxy_connection_init(s, peer);
+                    return;
+                }
+            #endif
             ngx_mail_proxy_init(s, peer);
 
             return;

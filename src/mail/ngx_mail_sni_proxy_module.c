@@ -52,6 +52,8 @@ typedef struct {
     ngx_log_t      *log;
     ngx_pool_t     *pool;
     ngx_uint_t      state;
+    ngx_peer_connection_t upstream;
+    ngx_buf_t              *proxy_buffer;
 } ngx_mail_sni_proxy_ctx_t;
 
 ngx_module_t  ngx_mail_sni_proxy_module = {
@@ -552,4 +554,64 @@ ngx_mail_sni_proxy_parse_record(ngx_mail_sni_proxy_ctx_t *ctx,
     ctx->dst = dst;
 
     return NGX_AGAIN;
+}
+
+void
+ngx_mail_sni_proxy_connection_init(ngx_mail_session_t *s, ngx_addr_t *peer)
+{
+    ngx_int_t                  rc;
+    ngx_mail_sni_proxy_ctx_t  *spc;
+    ngx_mail_sni_proxy_conf_t *spf;
+    ngx_mail_core_srv_conf_t  *cscf;
+
+    s->connection->log->action = "connecting to upstream";
+
+    cscf = ngx_mail_get_module_srv_conf(s, ngx_mail_core_module);
+
+    spc = ngx_mail_get_module_ctx(s, ngx_mail_sni_proxy_module);
+    if (spc == NULL) {
+        ngx_mail_session_internal_server_error(s);
+        return;
+    }
+
+    spc->upstream.sockaddr = peer->sockaddr;
+    spc->upstream.socklen = peer->socklen;
+    spc->upstream.name = &peer->name;
+    spc->upstream.get = ngx_event_get_peer;
+    spc->upstream.log = s->connection->log;
+    spc->upstream.log_error = NGX_ERROR_ERR;
+
+    rc = ngx_event_connect_peer(&spc->upstream);
+
+    if (rc == NGX_ERROR || rc == NGX_BUSY || rc == NGX_DECLINED) {
+        ngx_mail_proxy_internal_server_error(s);
+        return;
+    }
+
+    ngx_add_timer(spc->upstream.connection->read, cscf->timeout);
+
+    spc->upstream.connection->data = s;
+    spc->upstream.connection->pool = s->connection->pool;
+
+    s->connection->read->handler = ngx_mail_proxy_block_read;
+    spc->upstream.connection->write->handler = ngx_mail_sni_proxy_handle_upsteam;
+
+    spf = ngx_mail_get_module_srv_conf(s, ngx_mail_sni_proxy_module);
+
+    spc->proxy_buffer = ngx_create_temp_buf(s->connection->pool,
+                                           spf->buffer_size);
+    if (spc->proxy_buffer == NULL) {
+        ngx_mail_proxy_internal_server_error(s);
+        return;
+    }
+
+    s->out.len = 0;
+    spc->upstream.connection->read->handler = ngx_mail_sni_proxy_handle_upsteam;
+    s->state = ngx_smtp_start;
+
+    if (rc == NGX_AGAIN) {
+        return;
+    }
+
+    ngx_mail_sni_proxy_handle_upsteam(spc->upstream.connection->write);
 }
