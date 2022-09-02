@@ -594,7 +594,7 @@ ngx_mail_sni_proxy_connection_init(ngx_mail_session_t *s, ngx_addr_t *peer)
     spc->upstream.connection->pool = s->connection->pool;
 
     s->connection->read->handler = ngx_mail_proxy_block_read;
-    spc->upstream.connection->write->handler = ngx_mail_sni_proxy_handle_upsteam;
+    spc->upstream.connection->write->handler = ngx_mail_sni_proxy_handle_upsteam_write;
 
     spf = ngx_mail_get_module_srv_conf(s, ngx_mail_sni_proxy_module);
 
@@ -613,5 +613,65 @@ ngx_mail_sni_proxy_connection_init(ngx_mail_session_t *s, ngx_addr_t *peer)
         return;
     }
 
-    ngx_mail_sni_proxy_handle_upsteam(spc->upstream.connection->write);
+    ngx_mail_sni_proxy_handle_upsteam_write(spc->upstream.connection->write);
+}
+
+static void
+ngx_mail_sni_proxy_handle_upsteam_write(ngx_event_t *wev)
+{
+    ngx_connection_t    *c;
+    ngx_mail_session_t  *s;
+    ngx_mail_sni_proxy_ctx_t  *spc;
+
+    ngx_log_debug0(NGX_LOG_DEBUG_MAIL, wev->log, 0, "mail proxy sni write handler upstream");
+
+    c = wev->data;
+    s = c->data;
+
+    spc = ngx_mail_get_module_ctx(s, ngx_mail_sni_proxy_module);
+    if (spc == NULL) {
+        ngx_mail_session_internal_server_error(s);
+        return;
+    }
+
+    switch (s->state)
+    {
+    case ngx_smtp_helo:
+        ngx_mail_sni_proxy_send_hello_upstream(s, spc);
+        break;
+    
+    default:
+        break;
+    }
+
+    if (ngx_handle_write_event(wev, 0) != NGX_OK) {
+        ngx_mail_proxy_internal_server_error(s);
+    }
+
+    if (c->read->ready) {
+        ngx_post_event(c->read, &ngx_posted_events);
+    }
+}
+
+static ngx_int_t
+ngx_mail_sni_proxy_send_hello_upstream(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc)
+{
+    ngx_connection_t  *c;
+    ngx_buf_t         *b;
+
+    s->connection->log->action = "sending SMTP HELO to upstream";
+
+    ngx_log_debug0(NGX_LOG_DEBUG_MAIL, s->connection->log, 0,
+                "mail sni proxy sending SMTP HELO to upstream");
+
+    c = spc->upstream.connection;
+    b = spc->proxy_buffer;
+    b->pos = b->start;
+    b->last = b->start;
+    ngx_cpymem(b->last, "HELO ", 5);
+    b->last += 5;
+    //TODO validate buffer is atleast the size of host + 5
+    ngx_cpymem(b->last, s->host.data, s->host.len);
+    b->last += s->host.len;
+    c->send(c, b->pos, b->last-b->pos);
 }
