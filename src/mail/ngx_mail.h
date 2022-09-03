@@ -176,7 +176,9 @@ typedef enum {
     ngx_smtp_xclient_helo,
     ngx_smtp_xclient_auth,
     ngx_smtp_from,
-    ngx_smtp_to
+    ngx_smtp_to,
+    ngx_smtp_starttls,
+    ngx_smtp_proxy_tls
 } ngx_smtp_state_e;
 
 
