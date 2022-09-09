@@ -25,6 +25,7 @@ typedef struct {
     ngx_uint_t      state;
     ngx_peer_connection_t upstream;
     ngx_buf_t              *proxy_buffer;
+    ngx_buf_t       *tls_header;
 } ngx_mail_sni_proxy_ctx_t;
 
 static void *ngx_mail_sni_proxy_create_conf(ngx_conf_t *cf);
@@ -56,6 +57,8 @@ static ngx_int_t
 ngx_mail_sni_proxy_send_hello_upstream(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc);
 static ngx_int_t
 ngx_mail_sni_proxy_send_starttls(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc);
+static ngx_int_t
+ngx_mail_sni_proxy_send_tls_handshake(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc);
 
 
 static ngx_command_t  ngx_mail_sni_proxy_commands[] = {
@@ -66,7 +69,12 @@ static ngx_command_t  ngx_mail_sni_proxy_commands[] = {
       NGX_MAIL_SRV_CONF_OFFSET,
       offsetof(ngx_mail_sni_proxy_conf_t, enable),
       NULL },
-
+    { ngx_string("sni_proxy_buffer"),
+      NGX_MAIL_SRV_CONF|NGX_CONF_FLAG,
+      ngx_conf_set_size_slot,
+      NGX_MAIL_SRV_CONF_OFFSET,
+      offsetof(ngx_mail_sni_proxy_conf_t, buffer_size),
+      NULL },
     ngx_null_command
 };
 
@@ -111,6 +119,7 @@ ngx_mail_sni_proxy_create_conf(ngx_conf_t *cf)
     }
 
     spcf->enable = NGX_CONF_UNSET;
+    spcf->buffer_size = NGX_CONF_UNSET_SIZE;
 
     return spcf;
 }
@@ -197,6 +206,20 @@ ngx_mail_init_sni_preread(ngx_mail_session_t *s, ngx_connection_t *c)
         return NGX_AGAIN;
     }
 
+    ctx = ngx_mail_get_module_ctx(s, ngx_mail_sni_proxy_module);
+    if (ctx == NULL) {
+        ctx = ngx_pcalloc(c->pool, sizeof(ngx_mail_sni_proxy_ctx_t));
+        if (ctx == NULL) {
+            return NGX_ERROR;
+        }
+
+        ngx_mail_set_ctx(s, ctx, ngx_mail_sni_proxy_module);
+
+        ctx->pool = c->pool;
+        ctx->log = c->log;
+        ctx->pos = s->buffer->pos;
+    }
+
     if (s->buffer->last < s->buffer->end) {
 
         n = c->recv(c, s->buffer->last, s->buffer->end - s->buffer->last);
@@ -215,20 +238,9 @@ ngx_mail_init_sni_preread(ngx_mail_session_t *s, ngx_connection_t *c)
                 return NGX_AGAIN;
             }
         }
-    }
-
-    ctx = ngx_mail_get_module_ctx(s, ngx_mail_sni_proxy_module);
-    if (ctx == NULL) {
-        ctx = ngx_pcalloc(c->pool, sizeof(ngx_mail_sni_proxy_module));
-        if (ctx == NULL) {
-            return NGX_ERROR;
-        }
-
-        ngx_mail_set_ctx(s, ctx, ngx_mail_sni_proxy_module);
-
-        ctx->pool = c->pool;
-        ctx->log = c->log;
-        ctx->pos = s->buffer->pos;
+        ctx->tls_header = ngx_create_temp_buf(c->pool, n);
+        ngx_memcpy(ctx->tls_header->start, s->buffer->pos, n);
+        ctx->tls_header->last += n;
     }
 
     p = ctx->pos;
@@ -599,6 +611,7 @@ ngx_mail_sni_proxy_connection_init(ngx_mail_session_t *s, ngx_addr_t *peer)
         return;
     }
 
+    spc->upstream.type = SOCK_STREAM;
     spc->upstream.sockaddr = peer->sockaddr;
     spc->upstream.socklen = peer->socklen;
     spc->upstream.name = &peer->name;
@@ -637,8 +650,6 @@ ngx_mail_sni_proxy_connection_init(ngx_mail_session_t *s, ngx_addr_t *peer)
     if (rc == NGX_AGAIN) {
         return;
     }
-
-    ngx_mail_sni_proxy_handle_upsteam_write(spc->upstream.connection->write);
 }
 
 static void
@@ -694,7 +705,37 @@ ngx_mail_sni_proxy_handle_upsteam_read(ngx_event_t *wev)
         default:
             break;
     }
-    ngx_mail_sni_proxy_handle_upsteam_write(wev);
+
+    switch (s->state)
+    {
+        case ngx_smtp_helo:
+            ngx_mail_sni_proxy_send_hello_upstream(s, spc);
+            break;
+        case ngx_smtp_helo_xclient:
+            ngx_mail_sni_proxy_send_starttls(s, spc);
+            break;
+        case ngx_smtp_proxy_tls_handshake:
+            ngx_mail_sni_proxy_send_tls_handshake(s, spc);
+            s->state = ngx_smtp_proxy_tls;
+            break;
+        default:
+            break;
+    }
+}
+
+static ngx_int_t
+ngx_mail_sni_proxy_send_tls_handshake(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc)
+{
+    ngx_connection_t  *c;
+
+    s->connection->log->action = "sending TLS handshake to upstream";
+
+    ngx_log_debug0(NGX_LOG_DEBUG_MAIL, s->connection->log, 0,
+                "mail sni proxy sending TLS handshake to upstream");
+
+    c = spc->upstream.connection;
+    c->send(c, spc->tls_header->pos, spc->tls_header->last-spc->tls_header->pos);
+    return NGX_OK;
 }
 
 static void
@@ -705,7 +746,7 @@ ngx_mail_sni_proxy_read_to_downstream(ngx_mail_session_t *s, ngx_mail_sni_proxy_
 
     n = spc->upstream.connection->recv(
         spc->upstream.connection,
-        spc->proxy_buffer->last,
+        spc->proxy_buffer->pos,
         spc->proxy_buffer->end - spc->proxy_buffer->last);
 
     if (n == NGX_AGAIN) {
@@ -721,10 +762,9 @@ ngx_mail_sni_proxy_read_to_downstream(ngx_mail_session_t *s, ngx_mail_sni_proxy_
         ngx_mail_session_internal_server_error(s);
         return;
     }
-
     p = spc->proxy_buffer->pos;
 
-    s->connection->send(s->connection,p,spc->proxy_buffer->end-spc->proxy_buffer->pos);
+    s->connection->send(s->connection,p,n);
 
     if (ngx_handle_write_event(s->connection->write, 0) != NGX_OK) {
         ngx_mail_session_internal_server_error(s);
@@ -810,7 +850,7 @@ ngx_mail_sni_proxy_starttls_response(ngx_mail_session_t *s, ngx_mail_sni_proxy_c
     p = spc->proxy_buffer->pos;
 
     if (p[0] == '2' && p[1] == '2' && p[2] == '0') {
-        s->state = ngx_smtp_proxy_tls;
+        s->state = ngx_smtp_proxy_tls_handshake;
         return NGX_OK;
     }
 
@@ -881,6 +921,10 @@ ngx_mail_sni_proxy_read_uptream_greeting(ngx_mail_session_t *s, ngx_mail_sni_pro
         return NGX_ERROR;
     }
 
+    if (n == 0) {
+        return NGX_AGAIN;
+    }
+
     p = spc->proxy_buffer->pos;
 
     if (p[0] == '2' && p[1] == '2' && p[2] == '0') {
@@ -898,29 +942,11 @@ ngx_mail_sni_proxy_handle_upsteam_write(ngx_event_t *wev)
 {
     ngx_connection_t    *c;
     ngx_mail_session_t  *s;
-    ngx_mail_sni_proxy_ctx_t  *spc;
 
     ngx_log_debug0(NGX_LOG_DEBUG_MAIL, wev->log, 0, "mail proxy sni write handler upstream");
 
     c = wev->data;
     s = c->data;
-
-    spc = ngx_mail_get_module_ctx(s, ngx_mail_sni_proxy_module);
-    if (spc == NULL) {
-        ngx_mail_session_internal_server_error(s);
-        return;
-    }
-
-    switch (s->state)
-    {
-        case ngx_smtp_helo:
-            ngx_mail_sni_proxy_send_hello_upstream(s, spc);
-            break;
-        case ngx_smtp_helo_xclient:
-            ngx_mail_sni_proxy_send_starttls(s, spc);
-        default:
-            break;
-    }
 
     if (ngx_handle_write_event(wev, 0) != NGX_OK) {
         ngx_mail_session_internal_server_error(s);
@@ -944,8 +970,7 @@ ngx_mail_sni_proxy_send_starttls(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t
 
     c = spc->upstream.connection;
     b = spc->proxy_buffer;
-    b->pos = ngx_cpymem(b->last, "STARTTLS", 8);
-    b->last += 8;
+    b->last = ngx_cpymem(b->last, "STARTTLS\n", 9);
     c->send(c, b->pos, b->last-b->pos);
     b->pos = b->start;
     b->last = b->start;
@@ -965,11 +990,10 @@ ngx_mail_sni_proxy_send_hello_upstream(ngx_mail_session_t *s, ngx_mail_sni_proxy
 
     c = spc->upstream.connection;
     b = spc->proxy_buffer;
-    b->pos = ngx_cpymem(b->last, "HELO ", 5);
-    b->last += 5;
-    //TODO validate buffer is atleast the size of host + 5
-    b->pos = ngx_cpymem(b->last, s->host.data, s->host.len);
-    b->last += s->host.len;
+    b->last = ngx_cpymem(b->last, "HELO ", 5);
+    //TODO validate buffer is atleast the size of host + 6
+    b->last = ngx_cpymem(b->last, s->host.data, s->host.len);
+    b->last = ngx_cpymem(b->last, "\n", 1);
     c->send(c, b->pos, b->last-b->pos);
     b->pos = b->start;
     b->last = b->start;
