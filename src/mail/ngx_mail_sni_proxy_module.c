@@ -39,10 +39,6 @@ static void
 ngx_mail_sni_proxy_block_read(ngx_event_t *rev);
 static void
 ngx_mail_sni_proxy_handle_upsteam_read(ngx_event_t *wev);
-static void
-ngx_mail_sni_proxy_read_to_downstream(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc);
-static void
-ngx_mail_sni_proxy_read_to_upstream(ngx_event_t *wev);
 static ngx_int_t
 ngx_mail_sni_proxy_starttls_response(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc);
 static ngx_int_t
@@ -59,6 +55,12 @@ static ngx_int_t
 ngx_mail_sni_proxy_send_starttls(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc);
 static ngx_int_t
 ngx_mail_sni_proxy_send_tls_handshake(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc);
+static void
+ngx_mail_sni_close_session(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc);
+static void
+ngx_mail_sni_proxy_handler(ngx_event_t *ev);
+static void
+ngx_mail_sni_proxy_handler_resolved(ngx_event_t *ev, ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc);
 
 
 static ngx_command_t  ngx_mail_sni_proxy_commands[] = {
@@ -696,11 +698,12 @@ ngx_mail_sni_proxy_handle_upsteam_read(ngx_event_t *wev)
             break;
         case ngx_smtp_helo_xclient:
             if (ngx_mail_sni_proxy_starttls_response(s, spc) == NGX_OK ){
-                s->connection->read->handler = ngx_mail_sni_proxy_read_to_upstream;
+                s->connection->read->handler = ngx_mail_sni_proxy_handler;
+                spc->upstream.connection->read->handler = ngx_mail_sni_proxy_handler;
             }
             break;
         case ngx_smtp_proxy_tls:
-            ngx_mail_sni_proxy_read_to_downstream(s, spc);
+            ngx_mail_sni_proxy_handler_resolved(wev, s, spc);
             break;
         default:
             break;
@@ -739,50 +742,13 @@ ngx_mail_sni_proxy_send_tls_handshake(ngx_mail_session_t *s, ngx_mail_sni_proxy_
 }
 
 static void
-ngx_mail_sni_proxy_read_to_downstream(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc)
-{
-    ssize_t            n;
-    u_char*            p;
-
-    n = spc->upstream.connection->recv(
-        spc->upstream.connection,
-        spc->proxy_buffer->pos,
-        spc->proxy_buffer->end - spc->proxy_buffer->last);
-
-    if (n == NGX_AGAIN) {
-        if (ngx_handle_read_event(spc->upstream.connection->read, 0) != NGX_OK) {
-            ngx_mail_session_internal_server_error(s);
-            return;
-        }
-
-        return;
-    }
-
-    if (n == NGX_ERROR) {
-        ngx_mail_session_internal_server_error(s);
-        return;
-    }
-    p = spc->proxy_buffer->pos;
-
-    s->connection->send(s->connection,p,n);
-
-    if (ngx_handle_write_event(s->connection->write, 0) != NGX_OK) {
-        ngx_mail_session_internal_server_error(s);
-    }
-    spc->proxy_buffer->pos = spc->proxy_buffer->start;
-    spc->proxy_buffer->last = spc->proxy_buffer->start;
-}
-
-static void
-ngx_mail_sni_proxy_read_to_upstream(ngx_event_t *wev)
+ngx_mail_sni_proxy_handler(ngx_event_t *ev)
 {
     ngx_connection_t    *c;
     ngx_mail_session_t  *s;
     ngx_mail_sni_proxy_ctx_t  *spc;
-    ssize_t            n;
-    u_char*            p;
 
-    c = wev->data;
+    c = ev->data;
     s = c->data;
 
     spc = ngx_mail_get_module_ctx(s, ngx_mail_sni_proxy_module);
@@ -791,35 +757,187 @@ ngx_mail_sni_proxy_read_to_upstream(ngx_event_t *wev)
         return;
     }
 
-    n = s->connection->recv(
-        s->connection,
-        spc->proxy_buffer->last,
-        spc->proxy_buffer->end - spc->proxy_buffer->last);
+    ngx_mail_sni_proxy_handler_resolved(ev, s, spc);
+}
 
-    if (n == NGX_AGAIN) {
-        if (ngx_handle_read_event(s->connection->read, 0) != NGX_OK) {
-            ngx_mail_session_internal_server_error(s);
-            return ;
+static void
+ngx_mail_sni_proxy_handler_resolved(ngx_event_t *ev, ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc)
+{
+    char                   *action, *recv_action, *send_action;
+    size_t                  size;
+    ssize_t                 n;
+    ngx_buf_t              *b;
+    ngx_uint_t              do_write;
+    ngx_connection_t       *c, *src, *dst;
+
+    c = ev->data;
+
+    if (ev->timedout || c->close) {
+        c->log->action = "proxying";
+
+        if (c->close) {
+            ngx_log_error(NGX_LOG_INFO, c->log, 0, "shutdown timeout");
+
+        } else if (c == s->connection) {
+            ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT,
+                          "client timed out");
+            c->timedout = 1;
+
+        } else {
+            ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT,
+                          "upstream timed out");
         }
 
-        return ;
+        ngx_mail_sni_close_session(s, spc);
+        return;
     }
 
-    if (n == NGX_ERROR) {
-        ngx_mail_session_internal_server_error(s);
-        return ;
+    if (c == s->connection) {
+        if (ev->write) {
+            recv_action = "proxying and reading from upstream";
+            send_action = "proxying and sending to client";
+            src = spc->upstream.connection;
+            dst = c;
+            b = spc->proxy_buffer;
+
+        } else {
+            recv_action = "proxying and reading from client";
+            send_action = "proxying and sending to upstream";
+            src = c;
+            dst = spc->upstream.connection;
+            b = s->buffer;
+        }
+
+    } else {
+        if (ev->write) {
+            recv_action = "proxying and reading from client";
+            send_action = "proxying and sending to upstream";
+            src = s->connection;
+            dst = c;
+            b = s->buffer;
+
+        } else {
+            recv_action = "proxying and reading from upstream";
+            send_action = "proxying and sending to client";
+            src = c;
+            dst = s->connection;
+            b = spc->proxy_buffer;
+        }
     }
 
-    p = spc->proxy_buffer->pos;
+    do_write = ev->write ? 1 : 0;
 
-    spc->upstream.connection->send(spc->upstream.connection,p,spc->proxy_buffer->end-spc->proxy_buffer->pos);
+    ngx_log_debug3(NGX_LOG_DEBUG_MAIL, ev->log, 0,
+                   "mail proxy handler: %ui, #%d > #%d",
+                   do_write, src->fd, dst->fd);
 
-    if (ngx_handle_write_event(spc->upstream.connection->write, 0) != NGX_OK) {
-        ngx_mail_session_internal_server_error(s);
+    for ( ;; ) {
+
+        if (do_write) {
+
+            size = b->last - b->pos;
+
+            if (size && dst->write->ready) {
+                c->log->action = send_action;
+
+                n = dst->send(dst, b->pos, size);
+
+                if (n == NGX_ERROR) {
+                    ngx_mail_sni_close_session(s, spc);
+                    return;
+                }
+
+                if (n > 0) {
+                    b->pos += n;
+
+                    if (b->pos == b->last) {
+                        b->pos = b->start;
+                        b->last = b->start;
+                    }
+                }
+            }
+        }
+
+        size = b->end - b->last;
+
+        if (size && src->read->ready) {
+            c->log->action = recv_action;
+
+            n = src->recv(src, b->last, size);
+
+            if (n == NGX_AGAIN || n == 0) {
+                break;
+            }
+
+            if (n > 0) {
+                do_write = 1;
+                b->last += n;
+
+                continue;
+            }
+
+            if (n == NGX_ERROR) {
+                src->read->eof = 1;
+            }
+        }
+
+        break;
     }
 
-    spc->proxy_buffer->pos = spc->proxy_buffer->start;
-    spc->proxy_buffer->last = spc->proxy_buffer->start;
+    c->log->action = "proxying";
+
+    if ((s->connection->read->eof && s->buffer->pos == s->buffer->last)
+        || (spc->upstream.connection->read->eof
+            && spc->proxy_buffer->pos == spc->proxy_buffer->last)
+        || (s->connection->read->eof
+            && spc->upstream.connection->read->eof))
+    {
+        action = c->log->action;
+        c->log->action = NULL;
+        ngx_log_error(NGX_LOG_INFO, c->log, 0, "proxied session done");
+        c->log->action = action;
+
+        ngx_mail_sni_close_session(s, spc);
+        return;
+    }
+
+    if (ngx_handle_write_event(dst->write, 0) != NGX_OK) {
+        ngx_mail_sni_close_session(s, spc);
+        return;
+    }
+
+    if (ngx_handle_read_event(dst->read, 0) != NGX_OK) {
+        ngx_mail_sni_close_session(s, spc);
+        return;
+    }
+
+    if (ngx_handle_write_event(src->write, 0) != NGX_OK) {
+        ngx_mail_sni_close_session(s, spc);
+        return;
+    }
+
+    if (ngx_handle_read_event(src->read, 0) != NGX_OK) {
+        ngx_mail_sni_close_session(s, spc);
+        return;
+    }
+
+    /*if (c == s->connection) {
+        ngx_add_timer(c->read, pcf->timeout);
+    }*/
+}
+
+static void
+ngx_mail_sni_close_session(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t  *spc)
+{
+    if (spc->upstream.connection) {
+        ngx_log_debug1(NGX_LOG_DEBUG_MAIL, s->connection->log, 0,
+                       "close mail proxy connection: %d",
+                       spc->upstream.connection->fd);
+
+        ngx_close_connection(spc->upstream.connection);
+    }
+
+    ngx_mail_close_connection(s->connection);
 }
 
 static ngx_int_t
