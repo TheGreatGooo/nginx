@@ -289,6 +289,9 @@ ngx_mail_init_sni_preread(ngx_mail_session_t *s, ngx_connection_t *c)
         }
 
         if (rc != NGX_AGAIN) {
+            ctx->pos = NULL;
+            s->buffer->pos = s->buffer->start;
+            s->buffer->last = s->buffer->start;
             return rc;
         }
 
