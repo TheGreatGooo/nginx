@@ -878,10 +878,6 @@ ngx_mail_smtp_starttls(ngx_mail_session_t *s, ngx_connection_t *c)
     ngx_mail_sni_proxy_conf_t *snicf;
     snicf = ngx_mail_get_module_srv_conf(s, ngx_mail_sni_proxy_module);
     if(snicf->enable != NGX_CONF_UNSET) {
-         ngx_str_null(&s->smtp_helo);
-         ngx_str_null(&s->smtp_from);
-         ngx_str_null(&s->smtp_to);
-
          c->read->handler = ngx_mail_sni_starttls_handler;
          return NGX_OK;
     }

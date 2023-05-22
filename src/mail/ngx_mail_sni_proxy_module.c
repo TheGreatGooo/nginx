@@ -709,6 +709,9 @@ ngx_mail_sni_proxy_handle_upsteam_read(ngx_event_t *wev)
             break;
         case ngx_smtp_starttls:
             if (ngx_mail_sni_proxy_starttls_response(s, spc) == NGX_OK ){
+                ngx_str_null(&s->smtp_helo);
+                ngx_str_null(&s->smtp_from);
+                ngx_str_null(&s->smtp_to);
                 s->connection->read->handler = ngx_mail_sni_proxy_handler;
                 spc->upstream.connection->read->handler = ngx_mail_sni_proxy_handler;
             }
