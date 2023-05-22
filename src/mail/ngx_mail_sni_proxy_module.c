@@ -1107,6 +1107,7 @@ ngx_mail_sni_proxy_send_xclient(ngx_mail_session_t *s, ngx_mail_sni_proxy_ctx_t 
                      s->connection->addr_text.len);
     b->last = ngx_cpymem(b->last, " NAME=", sizeof(" NAME=") - 1);
     b->last = ngx_copy(b->last, s->host.data, s->host.len);
+    b->last = ngx_cpymem(b->last, "\n", 1);
     c->send(c, b->pos, b->last-b->pos);
     b->pos = b->start;
     b->last = b->start;
