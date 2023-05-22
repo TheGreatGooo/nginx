@@ -8,26 +8,6 @@
 #include <ngx_core.h>
 #include <ngx_mail.h>
 
-
-
-typedef struct {
-    size_t          left;
-    size_t          size;
-    size_t          ext;
-    u_char         *pos;
-    u_char         *dst;
-    u_char          buf[4];
-    u_char          version[2];
-    ngx_str_t       host;
-    ngx_str_t       alpn;
-    ngx_log_t      *log;
-    ngx_pool_t     *pool;
-    ngx_uint_t      state;
-    ngx_peer_connection_t upstream;
-    ngx_buf_t              *proxy_buffer;
-    ngx_buf_t       *tls_header;
-} ngx_mail_sni_proxy_ctx_t;
-
 static void *ngx_mail_sni_proxy_create_conf(ngx_conf_t *cf);
 static char *ngx_mail_sni_proxy_merge_conf(ngx_conf_t *cf, void *parent, void *child);
 static ngx_int_t
