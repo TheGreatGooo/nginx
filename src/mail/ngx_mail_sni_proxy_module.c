@@ -1150,7 +1150,8 @@ ngx_mail_sni_proxy_send_hello_upstream(ngx_mail_session_t *s, ngx_mail_sni_proxy
 
     c = spc->upstream.connection;
     b = spc->proxy_buffer;
-    b->last = ngx_cpymem(b->last, s->smtp_helo.data, s->smtp_helo.len);
+    b->last = ngx_cpymem(b->last, "EHLO ", 5);
+    b->last = ngx_copy(b->last, s->smtp_helo.data, s->smtp_helo.len);
     b->last = ngx_cpymem(b->last, "\n", 1);
     c->send(c, b->pos, b->last-b->pos);
     b->pos = b->start;
