@@ -149,13 +149,13 @@ ngx_mail_init_sni_snoop(ngx_mail_session_t *s, ngx_connection_t *c)
     if (rc != NGX_OK){
         c->log->action = "bad tls client hello closing connection";
         ngx_mail_close_connection(c);
+        return NGX_ERROR;
     }
 
     ctx = ngx_mail_get_module_ctx(s, ngx_mail_sni_proxy_module);
 
     if (ctx->host.len == 0){
         c->log->action = "tls sni not found";
-        ngx_mail_close_connection(c);
     }
 
     ngx_mail_auth_http_init(s);
