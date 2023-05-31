@@ -1478,10 +1478,11 @@ ngx_mail_auth_http_create_request(ngx_mail_session_t *s, ngx_pool_t *pool,
 #endif
 
 #if (NGX_MAIL_SNI_PROXY)
-
-    b->last = ngx_cpymem(b->last, "Destination-SNI: ", sizeof("Destination-SNI: ") - 1);
-    b->last = ngx_copy(b->last, sni_ctx->host.data, sni_ctx->host.len);
-    *b->last++ = CR; *b->last++ = LF;
+    if (sni_ctx != NULL) {
+        b->last = ngx_cpymem(b->last, "Destination-SNI: ", sizeof("Destination-SNI: ") - 1);
+        b->last = ngx_copy(b->last, sni_ctx->host.data, sni_ctx->host.len);
+        *b->last++ = CR; *b->last++ = LF;
+    }
 
 #endif
     if (ahcf->header.len) {
