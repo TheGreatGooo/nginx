@@ -1307,8 +1307,10 @@ ngx_mail_auth_http_create_request(ngx_mail_session_t *s, ngx_pool_t *pool,
 #endif
 
 #if (NGX_MAIL_SNI_PROXY)
-    len += sizeof("Destination-SNI: ") - 1 + sni_ctx->host.len
-                + sizeof(CRLF) - 1;
+    if (sni_ctx != NULL) {
+        len += sizeof("Destination-SNI: ") - 1 + sni_ctx->host.len
+                    + sizeof(CRLF) - 1;
+    }
 #endif
 
     b = ngx_create_temp_buf(pool, len);
