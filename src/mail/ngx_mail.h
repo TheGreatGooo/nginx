@@ -18,6 +18,9 @@
 #include <ngx_mail_ssl_module.h>
 #endif
 
+#if (NGX_MAIL_SNI_PROXY)
+#include <ngx_mail_sni_proxy_module.h>
+#endif
 
 
 typedef struct {
@@ -173,7 +176,10 @@ typedef enum {
     ngx_smtp_xclient_helo,
     ngx_smtp_xclient_auth,
     ngx_smtp_from,
-    ngx_smtp_to
+    ngx_smtp_to,
+    ngx_smtp_starttls,
+    ngx_smtp_proxy_tls_handshake,
+    ngx_smtp_proxy_tls
 } ngx_smtp_state_e;
 
 
@@ -381,7 +387,6 @@ void ngx_mail_starttls_handler(ngx_event_t *rev);
 ngx_int_t ngx_mail_starttls_only(ngx_mail_session_t *s, ngx_connection_t *c);
 #endif
 
-
 void ngx_mail_init_connection(ngx_connection_t *c);
 
 ngx_int_t ngx_mail_salt(ngx_mail_session_t *s, ngx_connection_t *c,
@@ -416,6 +421,11 @@ void ngx_mail_auth_http_init(ngx_mail_session_t *s);
 ngx_int_t ngx_mail_realip_handler(ngx_mail_session_t *s);
 /**/
 
+#if (NGX_MAIL_SNI_PROXY)
+ngx_int_t ngx_mail_init_sni_snoop(ngx_mail_session_t *s, ngx_connection_t *c);
+void ngx_mail_sni_starttls_handler(ngx_event_t *rev);
+void ngx_mail_sni_proxy_connection_init(ngx_mail_session_t *s, ngx_addr_t *peer);
+#endif
 
 extern ngx_uint_t    ngx_mail_max_module;
 extern ngx_module_t  ngx_mail_core_module;

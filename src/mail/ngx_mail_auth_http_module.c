@@ -832,6 +832,14 @@ ngx_mail_auth_http_process_headers(ngx_mail_session_t *s,
             ngx_memcpy(peer->name.data + len, ctx->port.data, ctx->port.len);
 
             ngx_destroy_pool(ctx->pool);
+            #if (NGX_MAIL_SNI_PROXY)
+                ngx_mail_sni_proxy_conf_t *snicf;
+                snicf = ngx_mail_get_module_srv_conf(s, ngx_mail_sni_proxy_module);
+                if(snicf->enable != NGX_CONF_UNSET) {
+                    ngx_mail_sni_proxy_connection_init(s, peer);
+                    return;
+                }
+            #endif
             ngx_mail_proxy_init(s, peer);
 
             return;
@@ -1141,6 +1149,9 @@ ngx_mail_auth_http_create_request(ngx_mail_session_t *s, ngx_pool_t *pool,
                                serial, fingerprint, raw_cert, cert;
     ngx_mail_ssl_conf_t       *sslcf;
 #endif
+#if (NGX_MAIL_SNI_PROXY)
+    ngx_mail_sni_proxy_ctx_t  *sni_ctx;
+#endif
     ngx_mail_core_srv_conf_t  *cscf;
 
     if (ngx_mail_auth_http_escape(pool, &s->login, &login) != NGX_OK) {
@@ -1152,6 +1163,10 @@ ngx_mail_auth_http_create_request(ngx_mail_session_t *s, ngx_pool_t *pool,
     }
 
     c = s->connection;
+
+#if (NGX_MAIL_SNI_PROXY)
+    sni_ctx = ngx_mail_get_module_ctx(s, ngx_mail_sni_proxy_module);
+#endif
 
 #if (NGX_MAIL_SSL)
 
@@ -1289,6 +1304,13 @@ ngx_mail_auth_http_create_request(ngx_mail_session_t *s, ngx_pool_t *pool,
                      + sizeof(CRLF) - 1;
     }
 
+#endif
+
+#if (NGX_MAIL_SNI_PROXY)
+    if (sni_ctx != NULL) {
+        len += sizeof("Destination-SNI: ") - 1 + sni_ctx->host.len
+                    + sizeof(CRLF) - 1;
+    }
 #endif
 
     b = ngx_create_temp_buf(pool, len);
@@ -1455,6 +1477,14 @@ ngx_mail_auth_http_create_request(ngx_mail_session_t *s, ngx_pool_t *pool,
 
 #endif
 
+#if (NGX_MAIL_SNI_PROXY)
+    if (sni_ctx != NULL) {
+        b->last = ngx_cpymem(b->last, "Destination-SNI: ", sizeof("Destination-SNI: ") - 1);
+        b->last = ngx_copy(b->last, sni_ctx->host.data, sni_ctx->host.len);
+        *b->last++ = CR; *b->last++ = LF;
+    }
+
+#endif
     if (ahcf->header.len) {
         b->last = ngx_copy(b->last, ahcf->header.data, ahcf->header.len);
     }

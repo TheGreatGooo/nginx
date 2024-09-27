@@ -646,6 +646,15 @@ ngx_mail_smtp_helo(ngx_mail_session_t *s, ngx_connection_t *c)
         }
 #endif
 
+#if (NGX_MAIL_SNI_PROXY)
+        ngx_mail_sni_proxy_conf_t *snicf;
+        snicf = ngx_mail_get_module_srv_conf(s, ngx_mail_sni_proxy_module);
+        if(snicf->enable != NGX_CONF_UNSET) {
+            s->out = sscf->starttls_only_capability;
+            return NGX_OK;
+        }
+#endif
+
         s->out = sscf->capability;
     }
 
@@ -863,6 +872,15 @@ ngx_mail_smtp_starttls(ngx_mail_session_t *s, ngx_connection_t *c)
         }
     }
 
+#endif
+
+#if (NGX_MAIL_SNI_PROXY)
+    ngx_mail_sni_proxy_conf_t *snicf;
+    snicf = ngx_mail_get_module_srv_conf(s, ngx_mail_sni_proxy_module);
+    if(snicf->enable != NGX_CONF_UNSET) {
+         c->read->handler = ngx_mail_sni_starttls_handler;
+         return NGX_OK;
+    }
 #endif
 
     return NGX_MAIL_PARSE_INVALID_COMMAND;
